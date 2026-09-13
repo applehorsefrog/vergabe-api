@@ -1,0 +1,58 @@
+name: daily-etl
+
+# Loads yesterday's notices from oeffentlichevergabe.de (CC0) into Cloudflare D1.
+# Runs in GitHub Actions because the Workers free plan allows only 10 ms CPU per invocation,
+# far too little to parse ~1,000 eForms XML files.
+
+on:
+  schedule:
+    - cron: "45 4 * * *"   # 04:45 UTC, after the daily export is complete
+  workflow_dispatch:
+    inputs:
+      day:
+        description: "Publication day YYYY-MM-DD (default: yesterday)"
+        required: false
+      days_back:
+        description: "Backfill this many days ending at 'day'"
+        required: false
+        default: "1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: etl
+  cancel-in-progress: false
+
+jobs:
+  etl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: pip install -r etl/requirements.txt
+      - run: npm ci
+      - name: Load
+        run: |
+          set -euo pipefail
+          DAY="${{ github.event.inputs.day }}"
+          BACK="${{ github.event.inputs.days_back }}"
+          [ -z "$DAY" ] && DAY=$(date -u -d "yesterday" +%F)
+          [ -z "$BACK" ] && BACK=1
+          for i in $(seq 0 $((BACK-1))); do
+            D=$(date -u -d "$DAY - $i day" +%F)
+            echo "== $D =="
+            python etl/etl.py --day "$D" --out "etl/out/$D.sql" > "etl/out/$D.files" || { echo "ETL failed for $D"; continue; }
+            while read -r f; do
+              npx wrangler d1 execute vergabe --remote --file="$f" --yes
+            done < "etl/out/$D.files"
+          done
