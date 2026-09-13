@@ -48,11 +48,16 @@ jobs:
           BACK="${{ github.event.inputs.days_back }}"
           [ -z "$DAY" ] && DAY=$(date -u -d "yesterday" +%F)
           [ -z "$BACK" ] && BACK=1
+          mkdir -p etl/out
+          FAILED=0
           for i in $(seq 0 $((BACK-1))); do
             D=$(date -u -d "$DAY - $i day" +%F)
             echo "== $D =="
-            python etl/etl.py --day "$D" --out "etl/out/$D.sql" > "etl/out/$D.files" || { echo "ETL failed for $D"; continue; }
+            if ! python etl/etl.py --day "$D" --out "etl/out/$D.sql" > "etl/out/$D.files"; then
+              echo "::error::ETL failed for $D"; FAILED=1; continue
+            fi
             while read -r f; do
               npx wrangler d1 execute vergabe --remote --file="$f" --yes
             done < "etl/out/$D.files"
           done
+          exit $FAILED
