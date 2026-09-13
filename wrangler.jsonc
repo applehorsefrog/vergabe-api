@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vergabe-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "vars": {
+    // Public, non-secret configuration. Secrets never go here.
+    "PAY_TO": "0x64FE7Dab6d5C2265A7dD912f0c1C4dd6614FA5c6",
+    "X402_NETWORK": "eip155:84532",
+    "X402_FACILITATOR": "https://x402.org/facilitator",
+    "PRICE_LIST": "$0.01",
+    "PRICE_NOTICE": "$0.002",
+    "PUBLIC_URL": "https://vergabe-api.applehorsefrog.workers.dev"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vergabe",
+      // database_id is filled in after `wrangler d1 create vergabe`
+      "database_id": "REPLACE_WITH_D1_ID"
+    }
+  ]
+}
