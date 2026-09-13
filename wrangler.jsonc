@@ -19,8 +19,7 @@
     {
       "binding": "DB",
       "database_name": "vergabe",
-      // database_id is filled in after `wrangler d1 create vergabe`
-      "database_id": "REPLACE_WITH_D1_ID"
+      "database_id": "3817d58c-cd41-4bff-9e00-bf4a734fc14d"
     }
   ]
 }
