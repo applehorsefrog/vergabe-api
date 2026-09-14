@@ -9,8 +9,8 @@
   "vars": {
     // Public, non-secret configuration. Secrets never go here.
     "PAY_TO": "0x64FE7Dab6d5C2265A7dD912f0c1C4dd6614FA5c6",
-    "X402_NETWORK": "eip155:84532",
-    "X402_FACILITATOR": "https://x402.org/facilitator",
+    "X402_NETWORK": "eip155:8453",
+    "X402_FACILITATOR": "https://facilitator.payai.network",
     "PRICE_LIST": "$0.01",
     "PRICE_NOTICE": "$0.002",
     "PUBLIC_URL": "https://vergabe-api.applehorsefrog.workers.dev"
