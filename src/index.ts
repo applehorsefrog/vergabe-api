@@ -3,7 +3,7 @@
  * Paid per call via x402 (USDC). Free sample and stats endpoints.
  *
  * Data source: Datenservice Öffentlicher Einkauf (oeffentlichevergabe.de), licence CC0.
- * Built with substantial AI assistance (Claude); operated pseudonymously by the account holder.
+ * Built with substantial AI assistance (Claude); operated by Viono Insights (see /impressum).
  */
 import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
@@ -21,7 +21,14 @@ type Bindings = {
   PUBLIC_URL: string;
 };
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
+const PROVIDER = {
+  name: "Dr. Josua Decker",
+  brand: "Viono Insights",
+  website: "https://viono-insights.de",
+  imprint: "https://viono-insights.de/impressum.html",
+  email: "kontakt@viono-insights.de",
+};
 const SOURCE = "Datenservice Öffentlicher Einkauf (oeffentlichevergabe.de)";
 const LICENSE = "CC0-1.0";
 
@@ -162,16 +169,65 @@ app.get("/", (c) => {
       "GET /v1/notices": { price: c.env.PRICE_LIST, params: "kind, cpv, nuts, q, since, until, deadline_after, deadline_before, nature, procedure, legal_basis, buyer_type, min_value, limit(<=100), offset, fields=compact|full" },
       "GET /v1/notice/{id}": { price: c.env.PRICE_NOTICE, note: "full record incl. lots and winners" },
       "GET /openapi.json": { price: "free" },
+      "GET /impressum": { price: "free", note: "legal notice (§ 5 DDG)" },
+      "GET /datenschutz": { price: "free", note: "privacy notice (Art. 13 DSGVO)" },
     },
     examples: [
       `${base}/v1/sample?cpv=72`,
       `${base}/v1/notices?cpv=45,71&nuts=DE2&deadline_after=2026-09-20&limit=20`,
       `${base}/v1/notices?q=Photovoltaik&since=2026-09-01`,
     ],
-    disclosure: "Built with substantial AI assistance (Claude) and operated pseudonymously by the account holder. No legal advice; verify deadlines at the source before bidding.",
-    source_code: "https://github.com/Applehorsefrog/vergabe-api",
+    provider: { name: PROVIDER.name, brand: PROVIDER.brand, website: PROVIDER.website, imprint: PROVIDER.imprint, privacy: `${base}/datenschutz`, contact: PROVIDER.email },
+    disclosure: "Built with substantial AI assistance (Claude); operated by the provider named above, who reviews and is responsible for it. No legal advice; verify deadlines at the source before bidding.",
+    source_code: "https://github.com/applehorsefrog/vergabe-api",
   });
 });
+
+// ---------- legal (§ 5 DDG, Art. 13 DSGVO) ----------
+const IMPRESSUM_TXT = `Impressum / Legal notice (§ 5 DDG)
+
+Anbieter dieses Dienstes (vergabe-api):
+${PROVIDER.name}, ${PROVIDER.brand}
+Kontakt: ${PROVIDER.email}
+Vollständiges Impressum mit Anschrift, Steuernummer und Haftungshinweisen:
+${PROVIDER.imprint}
+
+Datenschutzhinweise für diese API: siehe /datenschutz
+Datenquelle: Datenservice Öffentlicher Einkauf (oeffentlichevergabe.de), Lizenz CC0 1.0.
+Dieser Dienst wurde mit erheblicher KI-Unterstützung (Claude) erstellt und wird vom Anbieter geprüft und verantwortet.
+`;
+
+const DATENSCHUTZ_TXT = `Datenschutzhinweise für die API vergabe-api (Art. 13 DSGVO) / Privacy notice
+
+Verantwortlicher: ${PROVIDER.name}, ${PROVIDER.brand}, ${PROVIDER.email}. Anschrift siehe ${PROVIDER.imprint}
+
+1. Welche Daten verarbeitet werden
+- Technische Zugriffsdaten: IP-Adresse, Zeitpunkt, angefragte URL, User-Agent, Antwortstatus. Sie fallen beim Aufruf jeder HTTP-Schnittstelle an und werden von unserem Hosting-Dienstleister Cloudflare (Cloudflare, Inc., USA; EU-Standardvertragsklauseln und EU-US Data Privacy Framework) in Protokollen verarbeitet. Aufbewahrung in der Beobachtbarkeits-Funktion des Workers: bis zu 7 Tage.
+- Zahlungsdaten bei kostenpflichtigen Endpunkten (x402): Ihre Wallet-Adresse, der signierte Zahlungsauftrag und der Transaktions-Hash. Diese Daten sind Bestandteil einer öffentlichen Blockchain (Base) und werden vom Zahlungs-Facilitator (PayAI, facilitator.payai.network) zur Prüfung und Abwicklung verarbeitet. Wir speichern keine Wallet-Adressen über die Protokolle hinaus.
+- Keine Cookies, keine Konten, keine Registrierung, kein Tracking.
+
+2. Zwecke und Rechtsgrundlagen
+Bereitstellung und Sicherheit des Dienstes sowie Missbrauchsabwehr (Art. 6 Abs. 1 lit. f DSGVO); Abwicklung der Bezahlung pro Aufruf (Art. 6 Abs. 1 lit. b DSGVO).
+
+3. Inhalte der API
+Die ausgelieferten Daten stammen aus dem Datenservice Öffentlicher Einkauf (CC0). Personenbezogene Kontaktdaten (Ansprechpartner, E-Mail-Adressen, Telefonnummern) werden beim Import entfernt; es werden nur Organisationsdaten ausgeliefert. Sollten dennoch personenbezogene Daten enthalten sein, bitten wir um Hinweis an ${PROVIDER.email}; sie werden entfernt.
+
+4. Ihre Rechte
+Auskunft, Berichtigung, Löschung, Einschränkung, Widerspruch und Datenübertragbarkeit (Art. 15 bis 21 DSGVO) sowie Beschwerde bei einer Datenschutz-Aufsichtsbehörde, in Bayern das Bayerische Landesamt für Datenschutzaufsicht (BayLDA). Hinweis: Daten auf einer öffentlichen Blockchain können technisch nicht gelöscht werden.
+
+Stand: 14.09.2026
+`;
+
+app.get("/impressum", (c) => {
+  if ((c.req.header("accept") || "").includes("application/json")) {
+    return c.json({ law: "§ 5 DDG", provider: PROVIDER.name, brand: PROVIDER.brand, contact: PROVIDER.email, full_imprint: PROVIDER.imprint, privacy: "/datenschutz" });
+  }
+  return c.text(IMPRESSUM_TXT);
+});
+app.get("/imprint", (c) => c.redirect("/impressum", 301));
+app.get("/legal", (c) => c.redirect("/impressum", 301));
+app.get("/datenschutz", (c) => c.text(DATENSCHUTZ_TXT));
+app.get("/privacy", (c) => c.redirect("/datenschutz", 301));
 
 app.get("/openapi.json", (c) => {
   const base = c.env.PUBLIC_URL;
