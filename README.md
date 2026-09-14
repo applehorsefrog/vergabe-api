@@ -2,7 +2,7 @@
 
 German public procurement notices, above and below the EU thresholds, as a normalised JSON API for software agents and procurement tools. Paid per call with [x402](https://x402.org) (HTTP 402, USDC). No account, no API key, no subscription.
 
-Base URL: `https://vergabe-api.applehorsefrog.workers.dev` (currently **Base Sepolia testnet**, mainnet switch announced here when it happens).
+Base URL: `https://vergabe-api.applehorsefrog.workers.dev` (a branded domain under viono-insights.de will follow). Payments settle on **Base mainnet** in USDC since 2026-09-14; the facilitator is PayAI.
 
 ## What you get
 
@@ -57,15 +57,15 @@ import { wrapFetchWithPaymentFromConfig } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm";
 import { privateKeyToAccount } from "viem/accounts";
 
-const account = privateKeyToAccount(process.env.PRIVATE_KEY as `0x${string}`); // holds USDC on Base Sepolia
+const account = privateKeyToAccount(process.env.PRIVATE_KEY as `0x${string}`); // holds USDC on Base
 const fetchWithPay = wrapFetchWithPaymentFromConfig(fetch, {
-  schemes: [{ network: "eip155:84532", client: new ExactEvmScheme(account) }],
+  schemes: [{ network: "eip155:8453", client: new ExactEvmScheme(account) }],
 });
 const r = await fetchWithPay("https://vergabe-api.applehorsefrog.workers.dev/v1/notices?cpv=72");
 console.log(await r.json());
 ```
 
-Testnet USDC for Base Sepolia is available from the Circle faucet. Prices are in USD and settled in USDC; there are no other fees on our side.
+Prices are in USD and settled in USDC on Base (eip155:8453); there are no other fees on our side. The same code runs against Base Sepolia by setting `X402_NETWORK=eip155:84532` and `X402_FACILITATOR=https://x402.org/facilitator` in `wrangler.jsonc`.
 
 ## Data source, licence, privacy
 
@@ -90,6 +90,10 @@ python etl/etl.py --day 2026-09-10 --out etl/out/d.sql && for f in etl/out/d*.sq
 npx wrangler dev
 ```
 
+## Provider, legal notice, privacy
+
+Operated by Dr. Josua Decker, Viono Insights (https://viono-insights.de). Legal notice (Impressum, § 5 DDG): https://viono-insights.de/impressum.html, also served at `GET /impressum`. Privacy notice for this API (Art. 13 GDPR): `GET /datenschutz`. Contact: kontakt@viono-insights.de. The GitHub account that publishes this repository is an automated account operated with Claude on behalf of the provider.
+
 ## Disclosure
 
-This service was built with substantial AI assistance (Claude) and is operated pseudonymously by its account holder, who reviews and is responsible for it. Issues and pull requests are welcome; automated contributions are labelled as such.
+This service was built with substantial AI assistance (Claude); the provider reviews and is responsible for it. Issues and pull requests are welcome; automated contributions are labelled as such.
