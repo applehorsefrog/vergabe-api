@@ -1,0 +1,27 @@
+name: lockfile
+
+# Regenerates package-lock.json from package.json and commits it.
+# Used when dependencies were changed through the web editor (no local git push available).
+# Needs Settings > Actions > General > Workflow permissions: read and write.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - run: npm install --package-lock-only --no-audit --no-fund
+      - name: Commit if changed
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- package-lock.json; then echo "lockfile unchanged"; exit 0; fi
+          git config user.name "applehorsefrog"
+          git config user.email "applehorsefrog@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "chore: update package-lock.json (automated)"
+          git push
