@@ -37,6 +37,8 @@ Coverage on a sample day (2026-09-10): 1,067 notices, 589 calls for tenders, 569
 | `GET /v1/sample?cpv=72` | free | 5 latest calls for tenders, compact fields |
 | `GET /v1/notices` | $0.01 | filtered list, up to 100 records |
 | `GET /v1/notice/{id}` | $0.002 | one full record |
+| `POST /mcp` | free | remote MCP server (Streamable HTTP), free tools |
+| `GET /.well-known/x402` | free | x402 discovery manifest |
 
 ### Filters for `/v1/notices`
 
@@ -67,6 +69,28 @@ console.log(await r.json());
 
 Prices are in USD and settled in USDC on Base (eip155:8453); there are no other fees on our side. The same code runs against Base Sepolia by setting `X402_NETWORK=eip155:84532` and `X402_FACILITATOR=https://x402.org/facilitator` in `wrangler.jsonc`.
 
+## MCP server
+
+Two ways to use the data from an MCP client (Claude Desktop, Claude Code, Cursor, any MCP host):
+
+**Remote, free tools only** (no install): Streamable HTTP endpoint `https://vergabe-api.applehorsefrog.workers.dev/mcp` with `sample_tenders`, `tender_stats`, `describe_api`. The paid tools are listed there too but only return the payment requirements, because the remote server has no wallet.
+
+**Local, with paid tools** (stdio, Node 20+): the client pays per call from a wallet you control.
+
+```json
+{
+  "mcpServers": {
+    "vergabe": {
+      "command": "npx",
+      "args": ["-y", "github:applehorsefrog/vergabe-api"],
+      "env": { "VERGABE_PAYER_KEY": "0x<private key of a wallet holding USDC on Base>" }
+    }
+  }
+}
+```
+
+Tools: `search_tenders` ($0.01 per call, all filters of `/v1/notices`), `get_tender` ($0.002), `sample_tenders`, `tender_stats`, `describe_api` (free). Without `VERGABE_PAYER_KEY` the paid tools return the x402 payment requirements and the HTTP URL instead of data. Use a dedicated low-balance wallet for the key; the server never sends it anywhere, it only signs USDC transfer authorisations (EIP-3009) for the exact price of each call. Source: `mcp/server.mjs`.
+
 ## Data source, licence, privacy
 
 Data: Datenservice Öffentlicher Einkauf, https://oeffentlichevergabe.de, published under CC0 1.0. Every response carries `X-Data-Source` and `X-Data-License` headers. Code in this repository: MIT.
@@ -77,9 +101,10 @@ This is a technical data service, not legal advice. Deadlines and conditions mus
 
 ## How it runs
 
-- `src/index.ts`: Cloudflare Worker (Hono) with `@x402/hono` payment middleware and a D1 (SQLite) database.
+- `src/index.ts`: Cloudflare Worker (Hono) with `@x402/hono` payment middleware, a D1 (SQLite) database and the remote MCP endpoint.
+- `mcp/server.mjs`: local MCP server (stdio) that pays for the paid endpoints with `@x402/fetch`.
 - `etl/etl.py`: downloads the daily eForms ZIP, parses it with lxml, scrubs personal data, writes `INSERT` statements.
-- `.github/workflows/daily-etl.yml`: runs the ETL every morning and loads the rows with `wrangler d1 execute`.
+- `.github/workflows/daily-etl.yml`: runs the ETL twice a day (06:30 and 14:00 UTC), re-imports the last three days and loads the rows with `wrangler d1 execute`.
 
 Local development:
 
