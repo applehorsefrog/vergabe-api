@@ -1,8 +1,8 @@
 {
   "name": "vergabe-api",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "private": true,
-  "description": "German public procurement notices as a normalised JSON API, paid per call via x402 (USDC on Base). Data: Datenservice Öffentlicher Einkauf, CC0.",
+  "description": "German public procurement notices as a normalised JSON API and MCP server, paid per call via x402 (USDC on Base). Data: Datenservice Oeffentlicher Einkauf, CC0.",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -10,17 +10,35 @@
     "deploy": "wrangler deploy",
     "db:schema:local": "wrangler d1 execute vergabe --local --file=schema.sql",
     "db:schema:remote": "wrangler d1 execute vergabe --remote --file=schema.sql",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "mcp": "node mcp/server.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@x402/core": "^2.25.0",
     "@x402/evm": "^2.25.0",
+    "@x402/extensions": "^2.25.0",
+    "@x402/fetch": "^2.25.0",
     "@x402/hono": "^2.25.0",
-    "hono": "^4.6.0"
+    "hono": "^4.6.0",
+    "viem": "^2.56.5",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260911.1",
     "typescript": "^5.6.0",
     "wrangler": "^4.0.0"
+  },
+  "bin": {
+    "vergabe-mcp": "mcp/server.mjs"
+  },
+  "files": [
+    "mcp",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
   }
 }
