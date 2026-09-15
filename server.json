@@ -1,0 +1,18 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.applehorsefrog/vergabe-api",
+  "title": "vergabe-api: German public procurement notices",
+  "description": "German public tenders as normalised JSON (CPV, NUTS, deadlines). Free sample; search paid via x402.",
+  "version": "0.4.0",
+  "websiteUrl": "https://vergabe-api.applehorsefrog.workers.dev",
+  "repository": {
+    "url": "https://github.com/applehorsefrog/vergabe-api",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://vergabe-api.applehorsefrog.workers.dev/mcp"
+    }
+  ]
+}
