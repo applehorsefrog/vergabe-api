@@ -1,21 +1,25 @@
 name: daily-etl
 
-# Loads yesterday's notices from oeffentlichevergabe.de (CC0) into Cloudflare D1.
+# Loads recent notices from oeffentlichevergabe.de (CC0) into Cloudflare D1.
 # Runs in GitHub Actions because the Workers free plan allows only 10 ms CPU per invocation,
 # far too little to parse ~1,000 eForms XML files.
+#
+# The source publishes a day's export with a lag of several hours and keeps adding notices
+# to it for a few days, so every scheduled run re-imports the last 3 days (INSERT OR REPLACE)
+# and treats "export not available yet" as a notice, not a failure.
 
 on:
   schedule:
-    - cron: "45 4 * * *"   # 04:45 UTC, after the daily export is complete
+    - cron: "30 6,14 * * *"   # 06:30 and 14:00 UTC
   workflow_dispatch:
     inputs:
       day:
         description: "Publication day YYYY-MM-DD (default: yesterday)"
         required: false
       days_back:
-        description: "Backfill this many days ending at 'day'"
+        description: "Backfill this many days ending at 'day' (default: 3)"
         required: false
-        default: "1"
+        default: "3"
 
 permissions:
   contents: read
@@ -32,11 +36,11 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
       - run: pip install -r etl/requirements.txt
@@ -47,14 +51,20 @@ jobs:
           DAY="${{ github.event.inputs.day }}"
           BACK="${{ github.event.inputs.days_back }}"
           [ -z "$DAY" ] && DAY=$(date -u -d "yesterday" +%F)
-          [ -z "$BACK" ] && BACK=1
+          [ -z "$BACK" ] && BACK=3
           mkdir -p etl/out
           FAILED=0
           for i in $(seq 0 $((BACK-1))); do
             D=$(date -u -d "$DAY - $i day" +%F)
             echo "== $D =="
-            if ! python etl/etl.py --day "$D" --out "etl/out/$D.sql" > "etl/out/$D.files"; then
-              echo "::error::ETL failed for $D"; FAILED=1; continue
+            set +e
+            python etl/etl.py --day "$D" --out "etl/out/$D.sql" > "etl/out/$D.files"
+            RC=$?
+            set -e
+            if [ "$RC" -eq 3 ]; then
+              echo "::notice::$D: export not available yet, skipped"; continue
+            elif [ "$RC" -ne 0 ]; then
+              echo "::error::ETL failed for $D (exit $RC)"; FAILED=1; continue
             fi
             while read -r f; do
               npx wrangler d1 execute vergabe --remote --file="$f" --yes
