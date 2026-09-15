@@ -18,6 +18,7 @@ import io
 import json
 import re
 import sys
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -315,8 +316,16 @@ def main():
         data = Path(a.zip).read_bytes()
     else:
         req = urllib.request.Request(EXPORT_URL.format(day=a.day), headers={"User-Agent": "vergabe-api-etl/0.1 (CC0 open data; contact via GitHub)"})
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = resp.read()
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = resp.read()
+        except urllib.error.HTTPError as e:
+            # The daily export appears with a lag of several hours and is filled up over the
+            # following days; 400/404 means "not available yet", which is not an error.
+            if e.code in (400, 404):
+                print(f"{a.day}: export not available yet (HTTP {e.code})", file=sys.stderr)
+                sys.exit(3)
+            raise
     zf = zipfile.ZipFile(io.BytesIO(data))
     recs = []
     bad = 0
