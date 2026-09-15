@@ -11,6 +11,9 @@ import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { declareDiscoveryExtension, bazaarResourceServerExtension } from "@x402/extensions/bazaar";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { z } from "zod";
 
 type Bindings = {
   DB: D1Database;
@@ -22,7 +25,7 @@ type Bindings = {
   PUBLIC_URL: string;
 };
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 const PROVIDER = {
   name: "Dr. Josua Decker",
   brand: "Viono Insights",
@@ -31,6 +34,7 @@ const PROVIDER = {
   email: "kontakt@viono-insights.de",
 };
 const SOURCE = "Datenservice Öffentlicher Einkauf (oeffentlichevergabe.de)";
+const SOURCE_ASCII = "Datenservice Oeffentlicher Einkauf (oeffentlichevergabe.de)"; // headers must stay ASCII
 const LICENSE = "CC0-1.0";
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -38,7 +42,7 @@ const app = new Hono<{ Bindings: Bindings }>();
 // ---------- common headers ----------
 app.use("*", async (c, next) => {
   await next();
-  c.header("X-Data-Source", SOURCE);
+  c.header("X-Data-Source", SOURCE_ASCII);
   c.header("X-Data-License", LICENSE);
   c.header("X-Service-Version", VERSION);
   c.header("Access-Control-Allow-Origin", "*");
@@ -96,7 +100,7 @@ function paymentFor(env: Bindings): MiddlewareHandler {
           }),
         },
       },
-      "GET /v1/notice/*": {
+      "GET /v1/notice/:id": {
         accepts: accept(env.PRICE_NOTICE),
         description: "One German public procurement notice by UUID with all lots, deadlines, buyer, links and (for awards) winning organisations. Source: oeffentlichevergabe.de (CC0), contact data removed.",
         mimeType: "application/json",
@@ -216,6 +220,11 @@ app.get("/", (c) => {
       "GET /impressum": { price: "free", note: "legal notice (§ 5 DDG)" },
       "GET /datenschutz": { price: "free", note: "privacy notice (Art. 13 DSGVO)" },
       "GET /.well-known/x402": { price: "free", note: "x402 discovery manifest" },
+      "POST /mcp": { price: "free", note: "remote MCP server (Streamable HTTP): free tools sample_tenders, tender_stats, describe_api" },
+    },
+    mcp: {
+      remote: `${base}/mcp`,
+      local_paid: "npx -y github:applehorsefrog/vergabe-api  (stdio MCP with paid tools search_tenders and get_tender; set VERGABE_PAYER_KEY)",
     },
     examples: [
       `${base}/v1/sample?cpv=72`,
@@ -409,6 +418,91 @@ app.get("/v1/notice/:id", async (c) => {
   if (!row) row = await c.env.DB.prepare("SELECT * FROM notices WHERE notice_id = ? ORDER BY version DESC LIMIT 1").bind(id).first();
   if (!row) return c.json({ error: "not found" }, 404);
   return c.json({ attribution: `${SOURCE}, ${LICENSE}`, notice: rowOut(row as Record<string, unknown>) });
+});
+
+// ---------- remote MCP (Streamable HTTP, stateless): free tools only ----------
+// Paid tools need a paying wallet on the client side; they live in the stdio server (mcp/server.mjs).
+function buildMcp(c: Context<{ Bindings: Bindings }>) {
+  const base = c.env.PUBLIC_URL;
+  const mcp = new McpServer({ name: "vergabe-api", version: VERSION });
+  const text = (v: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(v, null, 1) }] });
+  const paidHint = (path: string) => ({
+    error: "payment_required",
+    message: `This tool is paid ($${path.startsWith("/v1/notices") ? "0.01" : "0.002"} USDC on Base per call, x402). The remote MCP server has no wallet. Options: (a) run the local MCP server with a paying wallet: npx -y github:applehorsefrog/vergabe-api with VERGABE_PAYER_KEY set; (b) call the HTTP endpoint with any x402 client.`,
+    url: `${base}${path}`,
+    docs: `${base}/openapi.json`,
+  });
+  mcp.registerTool("sample_tenders", {
+    title: "Free sample: latest German calls for tenders",
+    description: "FREE. The 5 most recent German public calls for tenders (compact fields) from oeffentlichevergabe.de, optionally filtered by one CPV code or prefix. Data: CC0, personal contact data removed.",
+    inputSchema: { cpv: z.string().regex(/^\d{2,8}$/).optional().describe("CPV code or prefix, e.g. 72 (IT), 45 (construction)") },
+    annotations: { readOnlyHint: true },
+  }, async ({ cpv }) => {
+    const items = list(cpv, /^\d{2,8}$/, 1) ?? [];
+    const where = ["kind = 'competition'"]; const params: unknown[] = [];
+    if (items.length) { where.push("cpv_main LIKE ?"); params.push(items[0] + "%"); }
+    const { results } = await c.env.DB.prepare(`SELECT ${COMPACT.join(", ")} FROM notices WHERE ${where.join(" AND ")} ORDER BY published DESC, id LIMIT 5`).bind(...params).all();
+    return text({ count: results.length, attribution: `${SOURCE}, ${LICENSE}`, notices: results.map((r) => rowOut(r as Record<string, unknown>)) });
+  });
+  mcp.registerTool("tender_stats", {
+    title: "Free: notices per day",
+    description: "FREE. Imported notices per publication day for the last 30 days, split by kind.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true },
+  }, async () => {
+    const { results } = await c.env.DB.prepare("SELECT day, notices, competition, result, planning, change, loaded_at FROM days ORDER BY day DESC LIMIT 30").all();
+    return text({ days: results });
+  });
+  mcp.registerTool("describe_api", {
+    title: "Service description, prices, legal notice",
+    description: "FREE. Endpoints, prices, x402 payment details (USDC on Base), data source and licence, provider and legal notice, how to use the paid tools.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true },
+  }, async () => {
+    const r = await app.request(`${base}/`, undefined, c.env);
+    return text(await r.json());
+  });
+  mcp.registerTool("search_tenders", {
+    title: "Search German procurement notices (paid, see description)",
+    description: "PAID ($0.01 USDC on Base per call via x402). Full-text and structured search over German public procurement notices (CPV, NUTS, deadline, buyer type, value). This remote server cannot pay on your behalf: the tool returns the exact HTTP URL and payment requirements; use the local MCP server (npx -y github:applehorsefrog/vergabe-api) or an x402 HTTP client to get data.",
+    inputSchema: {
+      kind: z.enum(["competition", "result", "planning", "change", "all"]).optional(),
+      cpv: z.string().optional(), nuts: z.string().optional(), q: z.string().optional(),
+      since: z.string().optional(), until: z.string().optional(),
+      deadline_after: z.string().optional(), deadline_before: z.string().optional(),
+      nature: z.string().optional(), procedure: z.string().optional(), legal_basis: z.string().optional(), buyer_type: z.string().optional(),
+      min_value: z.number().optional(), limit: z.number().int().optional(), offset: z.number().int().optional(),
+      fields: z.enum(["compact", "full"]).optional(), sort: z.enum(["published", "deadline"]).optional(),
+    },
+    annotations: { readOnlyHint: true },
+  }, async (args) => {
+    const u = new URLSearchParams();
+    for (const [k, v] of Object.entries(args)) if (v !== undefined && v !== "") u.set(k, String(v));
+    const qs = u.toString();
+    return { isError: true, ...text(paidHint(`/v1/notices${qs ? "?" + qs : ""}`)) };
+  });
+  mcp.registerTool("get_tender", {
+    title: "Get one procurement notice (paid, see description)",
+    description: "PAID ($0.002 USDC on Base per call via x402). One notice by UUID with lots, deadlines, links and winners. Returns the HTTP URL and payment requirements; pay via the local MCP server or an x402 HTTP client.",
+    inputSchema: { id: z.string().describe("notice UUID") },
+    annotations: { readOnlyHint: true },
+  }, async ({ id }) => ({ isError: true, ...text(paidHint(`/v1/notice/${encodeURIComponent(id)}`)) }));
+  return mcp;
+}
+
+app.all("/mcp", async (c) => {
+  if (c.req.method === "GET") {
+    // no server-initiated streams in stateless mode; give humans and crawlers something useful
+    return c.json({ name: "vergabe-api", transport: "streamable-http", endpoint: `${c.env.PUBLIC_URL}/mcp`, note: "POST JSON-RPC (MCP) here. Free tools: sample_tenders, tender_stats, describe_api. Paid tools require the local server: npx -y github:applehorsefrog/vergabe-api", docs: `${c.env.PUBLIC_URL}/` });
+  }
+  const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+  const mcp = buildMcp(c);
+  await mcp.connect(transport);
+  try {
+    return await transport.handleRequest(c.req.raw);
+  } finally {
+    c.executionCtx.waitUntil(mcp.close().catch(() => undefined));
+  }
 });
 
 app.notFound((c) => c.json({ error: "not found", see: "/" }, 404));
