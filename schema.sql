@@ -54,3 +54,12 @@ CREATE TABLE IF NOT EXISTS days (
   change INTEGER,
   loaded_at TEXT
 );
+
+-- request counters per day/path/status (no IPs, no user agents); written fire-and-forget by the worker
+CREATE TABLE IF NOT EXISTS hits (
+  day TEXT NOT NULL,
+  path TEXT NOT NULL,
+  status INTEGER NOT NULL,
+  n INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, path, status)
+);
