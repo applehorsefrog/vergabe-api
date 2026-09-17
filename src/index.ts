@@ -25,7 +25,7 @@ type Bindings = {
   PUBLIC_URL: string;
 };
 
-const VERSION = "0.4.0";
+const VERSION = "0.4.2";
 const PROVIDER = {
   name: "Dr. Josua Decker",
   brand: "Viono Insights",
@@ -39,7 +39,14 @@ const LICENSE = "CC0-1.0";
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-// ---------- common headers ----------
+// ---------- common headers + anonymous request counters ----------
+// Counts per day/path/status only (no IP, no user agent), fire-and-forget, so the answer to
+// "do agents reach the paywall and do they pay?" can be read from D1 (table hits).
+function metricPath(p: string): string {
+  if (p.startsWith("/v1/notice/")) return "/v1/notice/:id";
+  if (p.startsWith("/.well-known/")) return p;
+  return p.split("/").slice(0, 3).join("/") || "/";
+}
 app.use("*", async (c, next) => {
   await next();
   c.header("X-Data-Source", SOURCE_ASCII);
@@ -47,6 +54,14 @@ app.use("*", async (c, next) => {
   c.header("X-Service-Version", VERSION);
   c.header("Access-Control-Allow-Origin", "*");
   c.header("Access-Control-Expose-Headers", "*");
+  try {
+    const day = new Date().toISOString().slice(0, 10);
+    const path = metricPath(new URL(c.req.url).pathname);
+    c.executionCtx.waitUntil(
+      c.env.DB.prepare("INSERT INTO hits (day, path, status, n) VALUES (?, ?, ?, 1) ON CONFLICT(day, path, status) DO UPDATE SET n = n + 1")
+        .bind(day, path, c.res.status).run().catch(() => undefined),
+    );
+  } catch { /* metrics must never break a response */ }
 });
 
 // ---------- x402 payment middleware (lazy, per-isolate) ----------
@@ -294,6 +309,86 @@ app.get("/favicon.ico", (c) => {
   return c.body(ICON_SVG, 200, { "Content-Type": "image/svg+xml" });
 });
 
+// ---------- crawler-facing discovery files (the paths crawlers actually request, per hits table) ----------
+const DESCRIPTION_SHORT = "German public procurement notices (tenders, awards, planning) from oeffentlichevergabe.de (CC0) as normalised JSON: CPV, NUTS, buyer, deadlines, document links. Paid per call via x402 (USDC on Base), free sample and stats.";
+app.get("/llms.txt", (c) => {
+  const base = c.env.PUBLIC_URL;
+  c.header("Cache-Control", "public, max-age=3600");
+  return c.text(`# vergabe-api
+
+> ${DESCRIPTION_SHORT}
+
+Provider: ${PROVIDER.brand} (${PROVIDER.name}), ${PROVIDER.website}. Legal notice: ${base}/impressum. Privacy: ${base}/datenschutz. Contact: ${PROVIDER.email}.
+Built with substantial AI assistance (Claude); the provider reviews and is responsible for it.
+
+## Endpoints
+
+- [Service descriptor](${base}/): endpoints, prices, payment details (free)
+- [OpenAPI 3.1](${base}/openapi.json): full schema with x-payment-info per operation (free)
+- [x402 discovery manifest](${base}/.well-known/x402) (free)
+- [Free sample](${base}/v1/sample?cpv=72): 5 latest calls for tenders, optional ?cpv=
+- [Stats](${base}/v1/stats): notices per day, last 30 days (free)
+- [Search](${base}/v1/notices): filtered list, up to 100 records, ${c.env.PRICE_LIST} USDC per call via x402. Filters: kind, cpv, nuts, q, since, until, deadline_after, deadline_before, nature, procedure, legal_basis, buyer_type, min_value, limit, offset, fields, sort
+- [Single notice](${base}/v1/notice/{id}): full record with lots and winners, ${c.env.PRICE_NOTICE} USDC per call via x402
+
+## MCP
+
+- Remote (Streamable HTTP, free tools): ${base}/mcp
+- Local with paid tools: npx -y github:applehorsefrog/vergabe-api (set VERGABE_PAYER_KEY)
+- Registry: io.github.applehorsefrog/vergabe-api
+
+## Payment
+
+x402 v2, network ${c.env.X402_NETWORK} (Base), asset USDC, payTo ${c.env.PAY_TO}, facilitator ${c.env.X402_FACILITATOR}. A request without payment returns 402 with a PAYMENT-REQUIRED header; any x402 client (e.g. @x402/fetch) pays automatically.
+
+## Source
+
+Code (MIT): https://github.com/applehorsefrog/vergabe-api. Data: Datenservice Oeffentlicher Einkauf, CC0 1.0; personal contact data removed at import.
+`);
+});
+app.get("/robots.txt", (c) => {
+  c.header("Cache-Control", "public, max-age=86400");
+  return c.text(`User-agent: *\nAllow: /\nDisallow: /v1/notices\nDisallow: /v1/notice/\nSitemap: ${c.env.PUBLIC_URL}/sitemap.xml\n`);
+});
+app.get("/sitemap.xml", (c) => {
+  const base = c.env.PUBLIC_URL;
+  const urls = ["/", "/openapi.json", "/llms.txt", "/.well-known/x402", "/v1/sample", "/v1/stats", "/impressum", "/datenschutz"];
+  c.header("Cache-Control", "public, max-age=86400");
+  return c.body(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map((u) => `  <url><loc>${base}${u}</loc></url>`).join("\n")}\n</urlset>\n`, 200, { "Content-Type": "application/xml" });
+});
+app.get("/.well-known/security.txt", (c) => {
+  c.header("Cache-Control", "public, max-age=86400");
+  return c.text(`Contact: mailto:${PROVIDER.email}\nExpires: 2027-09-01T00:00:00.000Z\nPreferred-Languages: de, en\nCanonical: ${c.env.PUBLIC_URL}/.well-known/security.txt\nPolicy: https://github.com/applehorsefrog/vergabe-api#data-source-licence-privacy\n`);
+});
+app.get("/security.txt", (c) => c.redirect("/.well-known/security.txt", 301));
+// Glama MCP directory: maintainers can claim the server via this file
+app.get("/.well-known/glama.json", (c) => c.json({ $schema: "https://glama.ai/mcp/schemas/server.json", maintainers: ["applehorsefrog"] }));
+// A2A-style agent card (also served as agent.json): describes the paid data skills for agent frameworks that probe for it
+function agentCard(c: Context<{ Bindings: Bindings }>) {
+  const base = c.env.PUBLIC_URL;
+  return {
+    name: "vergabe-api",
+    description: DESCRIPTION_SHORT,
+    url: base,
+    version: VERSION,
+    documentationUrl: `${base}/openapi.json`,
+    provider: { organization: PROVIDER.brand, url: PROVIDER.website },
+    capabilities: { streaming: false, pushNotifications: false },
+    defaultInputModes: ["application/json"],
+    defaultOutputModes: ["application/json"],
+    skills: [
+      { id: "search_tenders", name: "Search German procurement notices", description: `Filtered search (CPV, NUTS, deadline, buyer type, full text), up to 100 records. ${c.env.PRICE_LIST} USDC per call via x402.`, tags: ["procurement", "tenders", "germany", "x402"], examples: [`${base}/v1/notices?cpv=45&nuts=DE2&deadline_after=2026-09-20`] },
+      { id: "get_tender", name: "Get one notice", description: `Full record by UUID with lots, deadlines, links, winners. ${c.env.PRICE_NOTICE} USDC per call via x402.`, tags: ["procurement", "x402"], examples: [`${base}/v1/notice/0066c4ef-f672-4717-aa5b-8b0d589a64a6`] },
+      { id: "sample_tenders", name: "Free sample", description: "5 latest calls for tenders, compact fields.", tags: ["free"], examples: [`${base}/v1/sample?cpv=72`] },
+    ],
+    payment: { protocol: "x402", version: 2, network: c.env.X402_NETWORK, asset: "USDC", payTo: c.env.PAY_TO, discovery: `${base}/.well-known/x402` },
+    mcp: { remote: `${base}/mcp`, local: "npx -y github:applehorsefrog/vergabe-api", registry: "io.github.applehorsefrog/vergabe-api" },
+    legal: { imprint: `${base}/impressum`, privacy: `${base}/datenschutz`, source: "https://github.com/applehorsefrog/vergabe-api" },
+  };
+}
+app.get("/.well-known/agent-card.json", (c) => { c.header("Cache-Control", "public, max-age=3600"); return c.json(agentCard(c)); });
+app.get("/.well-known/agent.json", (c) => { c.header("Cache-Control", "public, max-age=3600"); return c.json(agentCard(c)); });
+
 app.get("/.well-known/x402", (c) => {
   const base = c.env.PUBLIC_URL;
   c.header("Cache-Control", "public, max-age=3600");
@@ -495,11 +590,23 @@ app.all("/mcp", async (c) => {
     // no server-initiated streams in stateless mode; give humans and crawlers something useful
     return c.json({ name: "vergabe-api", transport: "streamable-http", endpoint: `${c.env.PUBLIC_URL}/mcp`, note: "POST JSON-RPC (MCP) here. Free tools: sample_tenders, tender_stats, describe_api. Paid tools require the local server: npx -y github:applehorsefrog/vergabe-api", docs: `${c.env.PUBLIC_URL}/` });
   }
+  if (c.req.method === "OPTIONS") {
+    return c.body(null, 204, { "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Allow-Headers": "*" });
+  }
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   const mcp = buildMcp(c);
   await mcp.connect(transport);
+  // Many clients send only "Accept: application/json"; the spec transport answers 406 unless
+  // text/event-stream is accepted too. We answer JSON anyway, so widen the header instead of refusing.
+  let req = c.req.raw;
+  const accept = req.headers.get("accept") || "";
+  if (!accept.includes("text/event-stream") || !accept.includes("application/json")) {
+    const h = new Headers(req.headers);
+    h.set("accept", "application/json, text/event-stream");
+    req = new Request(req, { headers: h });
+  }
   try {
-    return await transport.handleRequest(c.req.raw);
+    return await transport.handleRequest(req);
   } finally {
     c.executionCtx.waitUntil(mcp.close().catch(() => undefined));
   }
