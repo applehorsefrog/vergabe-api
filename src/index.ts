@@ -25,7 +25,7 @@ type Bindings = {
   PUBLIC_URL: string;
 };
 
-const VERSION = "0.4.2";
+const VERSION = "0.4.3";
 const PROVIDER = {
   name: "Dr. Josua Decker",
   brand: "Viono Insights",
@@ -465,6 +465,16 @@ app.get("/v1/stats", async (c) => {
   const { results } = await c.env.DB.prepare("SELECT day, notices, competition, result, planning, change, loaded_at FROM days ORDER BY day DESC LIMIT 30").all();
   c.header("Cache-Control", "public, max-age=3600");
   return c.json({ days: results });
+});
+
+// Anonymous request counters (day, path, status, n) for research on agent traffic; no IPs, no user agents.
+// Unlisted on purpose so that crawlers do not distort the measurement.
+app.get("/v1/traffic", async (c) => {
+  const days = Math.min(Math.max(parseInt(c.req.query("days") || "30", 10) || 30, 1), 365);
+  const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+  const { results } = await c.env.DB.prepare("SELECT day, path, status, n FROM hits WHERE day >= ? ORDER BY day DESC, n DESC").bind(since).all();
+  c.header("Cache-Control", "public, max-age=600");
+  return c.json({ since, note: "anonymous counters per day, path and status; no IPs or user agents stored", rows: results });
 });
 
 app.get("/v1/sample", async (c) => {
