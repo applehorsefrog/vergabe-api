@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["src/**", "wrangler.jsonc", "package.json"]
+    paths: ["src/**", "wrangler.jsonc", "package.json", ".github/workflows/deploy.yml"]
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: npm ci || npm install --no-audit --no-fund
       - run: npx wrangler deploy
         env:
